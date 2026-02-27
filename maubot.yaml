@@ -1,0 +1,9 @@
+maubot: 0.1.0
+id: durkluf.game-updates
+version: 1.0.0
+license: MIT
+modules:
+  - bot
+main_class: GameUpdatesBot
+database: true
+database_type: asyncpg
