@@ -1,6 +1,6 @@
 # Game Updates Maubot Plugin
 
-A Maubot plugin that tracks backend game updates and posts rich, HTML-formatted patch notes directly into your Matrix rooms.
+A Maubot plugin that tracks backend game updates and posts patch notes directly into your Matrix rooms.
 
 ## Features
 
