@@ -2,6 +2,8 @@ import asyncio
 import logging
 from typing import Dict, List
 
+import html
+import re
 import aiohttp
 from maubot import Plugin, MessageEvent
 from maubot.handlers import command
@@ -156,42 +158,109 @@ class GameUpdatesBot(Plugin):
             self.log.warning(f"Error fetching game info for {app_id}: {e}")
         return None
 
-    def _bbcode_to_html(self, text: str) -> str:
+    def _steam_markup_to_html(self, text: str) -> str:
         """Convert Steam BBCode to simple HTML for Matrix."""
         if not text:
             return ""
             
-        # Replace Steam's internal image variables with the actual CDN URL
+        # Replace Steam's internal image variables with the actual CDN URL.
         text = text.replace("{STEAM_CLAN_IMAGE}", "https://clan.cloudflare.steamstatic.com/images")
-        
-        # Basic replacements
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        url_placeholders = []
+        media_placeholders = []
+
+        def is_image_url(url: str) -> bool:
+            normalized = url.lower().split("?", 1)[0]
+            return normalized.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
+
+        def store_url(match) -> str:
+            href_raw = match.group(1).strip()
+            label_raw = (match.group(2) or "").strip()
+
+            href = html.escape(href_raw, quote=True)
+            label = html.escape(label_raw or href_raw)
+
+            token = f"__URL_{len(url_placeholders)}__"
+            url_placeholders.append(f'<a href="{href}">{label}</a>')
+            return token
+
+        def store_dynamiclink(match) -> str:
+            href_raw = (match.group(1) or "").strip()
+            label_raw = (match.group(2) or "").strip()
+
+            href = html.escape(href_raw, quote=True)
+
+            if label_raw.lower() == "image" and is_image_url(href_raw):
+                token = f"__MEDIA_{len(media_placeholders)}__"
+                media_placeholders.append(
+                    f'<br><a href="{href}"><img src="{href}" alt="Patch image" style="max-width:100%; height:auto;" /></a><br>'
+                )
+                return token
+
+            label = html.escape(label_raw or href_raw or "Link")
+            token = f"__URL_{len(url_placeholders)}__"
+            url_placeholders.append(f'<a href="{href}">{label}</a>')
+            return token
+
+        def store_img(match) -> str:
+            src_raw = (match.group(1) or "").strip()
+            src = html.escape(src_raw, quote=True)
+
+            token = f"__MEDIA_{len(media_placeholders)}__"
+            media_placeholders.append(
+                f'<br><a href="{src}"><img src="{src}" alt="Patch image" style="max-width:100%; height:auto;" /></a><br>'
+            )
+            return token
+
+        # Preserve URLs and media before escaping the rest of the content.
+        text = re.sub(r'\[url=(.+?)\](.*?)\[/url\]', store_url, text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'\[dynamiclink\s+href="(.*?)"\](.*?)\[/dynamiclink\]', store_dynamiclink, text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'\[img\s+src="(.*?)"\]\[/img\]', store_img, text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'\[img\](.*?)\[/img\]', store_img, text, flags=re.IGNORECASE | re.DOTALL)
+
+        text = html.escape(text)
+
+        # Restore simple formatting tags that map cleanly to Matrix-safe HTML.
         replacements = {
             "[b]": "<b>", "[/b]": "</b>",
             "[i]": "<i>", "[/i]": "</i>",
             "[u]": "<u>", "[/u]": "</u>",
-            "[p]": "<p>", "[/p]": "</p>",
-            "[list]": "<ul>", "[/list]": "</ul>",
-            "[*]": "<li>", "[/*]": "</li>",
-            "\\[": "[", "\\]": "]", # Unescape brackets
+            "\\[": "[", "\\]": "]",
         }
         
         for old, new in replacements.items():
             text = text.replace(old, new)
+
+        # Normalize common Steam announcement structure such as headings, rules, and lists.
+        text = re.sub(r'\[h[1-6](?:=[^\]]*)?\](.*?)\[/h[1-6]\]', r'<br><b>\1</b><br>', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'\[hr\]\s*\[/hr\]', '<br>──────────<br>', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[hr\]', '<br>──────────<br>', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[list\]', '<br>', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[/list\]', '<br>', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[\*\]\s*', '<br>• ', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[/\*\]', '', text, flags=re.IGNORECASE)
+
+        # Remove any remaining unsupported tags after the known conversions above.
+        text = re.sub(r'\[(?:/?)[a-z0-9]+(?:=[^\]]*)?\]', '', text, flags=re.IGNORECASE)
+
+        text = text.replace("\n\n", "<br><br>")
+        text = text.replace("\n", "<br>")
+
+        # Restore preserved links and media after escaping and tag normalization.
+        for i, replacement in enumerate(url_placeholders):
+            text = text.replace(f"__URL_{i}__", replacement)
+
+        for i, replacement in enumerate(media_placeholders):
+            text = text.replace(f"__MEDIA_{i}__", replacement)
+
+        text = re.sub(r'(<br>\s*){3,}', '<br><br>', text)
             
-        import re
-        # Handle URLs: [url=http://...]text[/url]
-        text = re.sub(r'\[url=(.+?)\](.*?)\[/url\]', r'<a href="\1">\2</a>', text)
-        
-        # Element and many Matrix clients block external images in message bodies for privacy/security.
-        # Remove Steam's [img] and [img src="..."] tags entirely from the patch notes content.
-        text = re.sub(r'\[img\s+src="(.*?)"\]\[/img\]', '', text)
-        text = re.sub(r'\[img\](.*?)\[/img\]', '', text)
-        
-        # Limit length to avoid massive messages
+        # Limit length to avoid massive messages.
         if len(text) > 2000:
             text = text[:1997] + "..."
             
-        return text
+        return text.strip()
 
     async def fetch_latest_update(self, app_id: str):
         # We use the official Steam News API to get actual patch notes
@@ -211,7 +280,7 @@ class GameUpdatesBot(Plugin):
                                 game_name = game_info['name'] if game_info else f"App {app_id}"
                                 
                                 raw_contents = item.get("contents", "No patch notes provided.")
-                                html_contents = self._bbcode_to_html(raw_contents)
+                                html_contents = self._steam_markup_to_html(raw_contents)
                                 
                                 return {
                                     "title": item.get("title", "New Update"),
