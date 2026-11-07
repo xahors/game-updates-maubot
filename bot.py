@@ -87,7 +87,17 @@ STR: Dict[str, Dict[str, str]] = {
         "en": "Could not retrieve patch notes for Steam App ID {app_id}. It might be invalid or have no recent official announcements.",
         "ru": "Не удалось получить патчноуты для Steam App ID {app_id}. Возможно, ID неверный или нет недавних официальных анонсов.",
     },
+    "internal_error": {
+        "en": "Something went wrong while running this command. Check the maubot instance logs.",
+        "ru": "При выполнении команды произошла ошибка. Проверьте логи экземпляра maubot.",
+    },
+    "added_unknown_name": {
+        "en": "Steam App ID {app_id}",
+        "ru": "Steam App ID {app_id}",
+    },
 }
+
+_HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
 def contains_cyrillic(text: Optional[str]) -> bool:
@@ -115,7 +125,8 @@ async def upgrade_v1(conn, scheme: Scheme) -> None:
         """
         CREATE TABLE IF NOT EXISTS room_settings (
             room_id TEXT PRIMARY KEY,
-            paused BOOLEAN DEFAULT FALSE
+            paused BOOLEAN DEFAULT FALSE,
+            language TEXT DEFAULT 'en'
         )
         """
     )
@@ -132,9 +143,12 @@ async def upgrade_v1(conn, scheme: Scheme) -> None:
 @upgrade_table.register(description="Room language preference")
 async def upgrade_v2(conn, scheme: Scheme) -> None:
     if scheme == Scheme.SQLITE:
-        await conn.execute(
-            "ALTER TABLE room_settings ADD COLUMN language TEXT DEFAULT 'en'"
-        )
+        rows = await conn.fetch("PRAGMA table_info(room_settings)")
+        column_names = {row["name"] for row in rows}
+        if "language" not in column_names:
+            await conn.execute(
+                "ALTER TABLE room_settings ADD COLUMN language TEXT DEFAULT 'en'"
+            )
     else:
         await conn.execute(
             "ALTER TABLE room_settings ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en'"
@@ -153,24 +167,37 @@ class GameUpdatesBot(Plugin):
         self.check_task.cancel()
 
     async def _mark_room_russian(self, room_id: str) -> None:
-        await self.database.execute(
-            """
-            INSERT INTO room_settings (room_id, paused, language)
-            VALUES ($1, FALSE, 'ru')
-            ON CONFLICT (room_id) DO UPDATE SET language = 'ru'
-            """,
-            room_id,
-        )
+        try:
+            await self.database.execute(
+                """
+                INSERT INTO room_settings (room_id, paused, language)
+                VALUES ($1, FALSE, 'ru')
+                ON CONFLICT (room_id) DO UPDATE SET language = 'ru'
+                """,
+                room_id,
+            )
+        except Exception as e:
+            self.log.warning(f"Could not save room language for {room_id}: {e}")
 
     async def resolve_locale(self, room_id: str, *context: Optional[str]) -> str:
         if any(contains_cyrillic(t) for t in context if t):
             return "ru"
-        row = await self.database.fetchrow(
-            "SELECT language FROM room_settings WHERE room_id=$1", room_id
-        )
-        if row and row.get("language") == "ru":
-            return "ru"
+        try:
+            row = await self.database.fetchrow(
+                "SELECT language FROM room_settings WHERE room_id=$1", room_id
+            )
+            if row and row["language"] == "ru":
+                return "ru"
+        except Exception as e:
+            self.log.warning(f"Could not read room language for {room_id}: {e}")
         return "en"
+
+    async def _command_locale(self, evt: MessageEvent) -> str:
+        return await self.resolve_locale(str(evt.room_id), self._message_body(evt))
+
+    async def _respond_error(self, evt: MessageEvent) -> None:
+        locale = await self._command_locale(evt)
+        await evt.respond(tr(locale, "internal_error"))
 
     def _message_body(self, evt: MessageEvent) -> str:
         return getattr(evt.content, "body", "") or ""
@@ -184,9 +211,12 @@ class GameUpdatesBot(Plugin):
     async def detect_room_language(self, evt: MessageEvent) -> None:
         if evt.sender == self.client.mxid:
             return
-        body = self._message_body(evt)
-        if contains_cyrillic(body):
-            await self._mark_room_russian(str(evt.room_id))
+        try:
+            body = self._message_body(evt)
+            if contains_cyrillic(body):
+                await self._mark_room_russian(str(evt.room_id))
+        except Exception as e:
+            self.log.warning(f"Language detection failed: {e}")
 
     @command.new("game-updates", require_subcommand=True)
     async def game_updates(self, evt: MessageEvent) -> None:
@@ -196,117 +226,147 @@ class GameUpdatesBot(Plugin):
     @game_updates.subcommand("pause")
     async def pause(self, evt: MessageEvent) -> None:
         """Pause or resume game update notifications in this channel."""
-        await self._note_user_language(evt)
-        room_id = str(evt.room_id)
-        locale = await self.resolve_locale(room_id, self._message_body(evt))
-        
-        row = await self.database.fetchrow("SELECT paused FROM room_settings WHERE room_id=$1", room_id)
-        current = row["paused"] if row else False
-        new_status = not current
-        
-        if row is None:
-            await self.database.execute(
-                "INSERT INTO room_settings (room_id, paused) VALUES ($1, $2)", room_id, new_status
-            )
-        else:
-            await self.database.execute("UPDATE room_settings SET paused=$1 WHERE room_id=$2", new_status, room_id)
-            
-        status_key = "pause_paused" if new_status else "pause_resumed"
-        await evt.respond(tr(locale, "pause", status=tr(locale, status_key)))
+        try:
+            await self._note_user_language(evt)
+            room_id = str(evt.room_id)
+            locale = await self.resolve_locale(room_id, self._message_body(evt))
+
+            row = await self.database.fetchrow("SELECT paused FROM room_settings WHERE room_id=$1", room_id)
+            current = row["paused"] if row else False
+            new_status = not current
+
+            if row is None:
+                await self.database.execute(
+                    "INSERT INTO room_settings (room_id, paused) VALUES ($1, $2)", room_id, new_status
+                )
+            else:
+                await self.database.execute(
+                    "UPDATE room_settings SET paused=$1 WHERE room_id=$2", new_status, room_id
+                )
+
+            status_key = "pause_paused" if new_status else "pause_resumed"
+            await evt.respond(tr(locale, "pause", status=tr(locale, status_key)))
+        except Exception:
+            self.log.exception("pause command failed")
+            await self._respond_error(evt)
 
     @game_updates.subcommand("add")
     @command.argument("app_id", pass_raw=True)
     async def add_game(self, evt: MessageEvent, app_id: str) -> None:
         """Subscribe this channel to updates for a specific Steam App ID."""
-        await self._note_user_language(evt)
-        app_id = app_id.strip()
-        room_id = str(evt.room_id)
-        locale = await self.resolve_locale(room_id, self._message_body(evt))
-        if not app_id:
-            await evt.respond(tr(locale, "usage_add"))
-            return
-        
-        game_info = await self.fetch_game_info(app_id)
-        if not game_info:
-            await evt.respond(tr(locale, "invalid_app_id", app_id=app_id))
-            return
+        app_id_arg = app_id
+        try:
+            await self._note_user_language(evt)
+            app_id = app_id.strip()
+            room_id = str(evt.room_id)
+            locale = await self.resolve_locale(room_id, self._message_body(evt))
+            if not app_id or not app_id.isdigit():
+                await evt.respond(tr(locale, "usage_add"))
+                return
 
-        locale = await self.resolve_locale(room_id, self._message_body(evt), game_info["name"])
-        game_name = html.escape(game_info["name"])
-        
-        row = await self.database.fetchrow("SELECT app_id FROM game_subscriptions WHERE room_id=$1 AND app_id=$2", room_id, app_id)
-        if row:
-            await evt.respond(tr(locale, "already_subscribed", name=game_info["name"], app_id=app_id))
-            return
+            game_info = await self.fetch_game_info(app_id)
+            if game_info:
+                display_name = game_info["name"]
+            else:
+                display_name = tr(locale, "added_unknown_name", app_id=app_id)
 
-        await self.database.execute("INSERT INTO game_subscriptions (room_id, app_id) VALUES ($1, $2)", room_id, app_id)
-        
-        content = TextMessageEventContent(
-            msgtype=MessageType.NOTICE,
-            format=Format.HTML,
-            body=tr(locale, "added_plain", name=game_info["name"], app_id=app_id),
-            formatted_body=tr(locale, "added_html", name=game_name, app_id=app_id),
-        )
-        await evt.respond(content)
+            locale = await self.resolve_locale(room_id, self._message_body(evt), display_name)
+            game_name_html = html.escape(display_name)
+
+            row = await self.database.fetchrow(
+                "SELECT app_id FROM game_subscriptions WHERE room_id=$1 AND app_id=$2", room_id, app_id
+            )
+            if row:
+                await evt.respond(tr(locale, "already_subscribed", name=display_name, app_id=app_id))
+                return
+
+            await self.database.execute(
+                "INSERT INTO game_subscriptions (room_id, app_id) VALUES ($1, $2)", room_id, app_id
+            )
+
+            content = TextMessageEventContent(
+                msgtype=MessageType.NOTICE,
+                format=Format.HTML,
+                body=tr(locale, "added_plain", name=display_name, app_id=app_id),
+                formatted_body=tr(locale, "added_html", name=game_name_html, app_id=app_id),
+            )
+            await evt.respond(content)
+        except Exception:
+            self.log.exception("add command failed for app_id=%r", app_id_arg)
+            await self._respond_error(evt)
 
     @game_updates.subcommand("remove")
     @command.argument("app_id", pass_raw=True)
     async def remove_game(self, evt: MessageEvent, app_id: str) -> None:
         """Unsubscribe this channel from a specific Steam App ID."""
-        await self._note_user_language(evt)
-        app_id = app_id.strip()
-        room_id = str(evt.room_id)
-        locale = await self.resolve_locale(room_id, self._message_body(evt))
-        
-        row = await self.database.fetchrow("SELECT app_id FROM game_subscriptions WHERE room_id=$1 AND app_id=$2", room_id, app_id)
-        if row:
-            game_info = await self.fetch_game_info(app_id)
-            game_name = game_info["name"] if game_info else f"App ID {app_id}"
-            locale = await self.resolve_locale(room_id, self._message_body(evt), game_name)
-            
-            await self.database.execute("DELETE FROM game_subscriptions WHERE room_id=$1 AND app_id=$2", room_id, app_id)
-            await evt.respond(tr(locale, "removed", name=game_name))
-        else:
-            await evt.respond(tr(locale, "not_in_list", app_id=app_id))
+        try:
+            await self._note_user_language(evt)
+            app_id = app_id.strip()
+            room_id = str(evt.room_id)
+            locale = await self.resolve_locale(room_id, self._message_body(evt))
+
+            row = await self.database.fetchrow(
+                "SELECT app_id FROM game_subscriptions WHERE room_id=$1 AND app_id=$2", room_id, app_id
+            )
+            if row:
+                game_info = await self.fetch_game_info(app_id)
+                game_name = game_info["name"] if game_info else f"App ID {app_id}"
+                locale = await self.resolve_locale(room_id, self._message_body(evt), game_name)
+
+                await self.database.execute(
+                    "DELETE FROM game_subscriptions WHERE room_id=$1 AND app_id=$2", room_id, app_id
+                )
+                await evt.respond(tr(locale, "removed", name=game_name))
+            else:
+                await evt.respond(tr(locale, "not_in_list", app_id=app_id))
+        except Exception:
+            self.log.exception("remove command failed")
+            await self._respond_error(evt)
 
     @game_updates.subcommand("list")
     async def list_games(self, evt: MessageEvent) -> None:
         """List all games this channel is currently subscribed to."""
-        await self._note_user_language(evt)
-        room_id = str(evt.room_id)
-        locale = await self.resolve_locale(room_id, self._message_body(evt))
-        rows = await self.database.fetch("SELECT app_id FROM game_subscriptions WHERE room_id=$1", room_id)
-        
-        if not rows:
-            await evt.respond(tr(locale, "list_empty"))
-            return
+        try:
+            await self._note_user_language(evt)
+            room_id = str(evt.room_id)
+            locale = await self.resolve_locale(room_id, self._message_body(evt))
+            rows = await self.database.fetch(
+                "SELECT app_id FROM game_subscriptions WHERE room_id=$1", room_id
+            )
 
-        entries: List[tuple[str, Optional[str]]] = []
-        names_for_locale: List[str] = []
-        for row in rows:
-            app_id = row["app_id"]
-            game_info = await self.fetch_game_info(app_id)
-            if game_info:
-                names_for_locale.append(game_info["name"])
-                entries.append((app_id, game_info["name"]))
-            else:
-                entries.append((app_id, None))
+            if not rows:
+                await evt.respond(tr(locale, "list_empty"))
+                return
 
-        locale = await self.resolve_locale(room_id, self._message_body(evt), *names_for_locale)
+            entries: List[tuple[str, Optional[str]]] = []
+            names_for_locale: List[str] = []
+            for row in rows:
+                app_id = row["app_id"]
+                game_info = await self.fetch_game_info(app_id)
+                if game_info:
+                    names_for_locale.append(game_info["name"])
+                    entries.append((app_id, game_info["name"]))
+                else:
+                    entries.append((app_id, None))
 
-        game_list_messages = []
-        for app_id, game_name in entries:
-            if game_name is None:
-                game_name = tr(locale, "unknown_game", app_id=app_id)
-            game_list_messages.append(f"- {game_name} (App ID {app_id})")
+            locale = await self.resolve_locale(room_id, self._message_body(evt), *names_for_locale)
 
-        response_body = tr(locale, "list_header") + "\n" + "\n".join(game_list_messages)
-        await evt.respond(response_body)
+            game_list_messages = []
+            for app_id, game_name in entries:
+                if game_name is None:
+                    game_name = tr(locale, "unknown_game", app_id=app_id)
+                game_list_messages.append(f"- {game_name} (App ID {app_id})")
+
+            response_body = tr(locale, "list_header") + "\n" + "\n".join(game_list_messages)
+            await evt.respond(response_body)
+        except Exception:
+            self.log.exception("list command failed")
+            await self._respond_error(evt)
 
     async def fetch_game_info(self, app_id: str):
         url = f"https://api.steamcmd.net/v1/info/{app_id}"
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
                 async with session.get(url) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -445,7 +505,7 @@ class GameUpdatesBot(Plugin):
         # We use the official Steam News API to get actual patch notes
         url = f"https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid={app_id}&count=10"
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
                 async with session.get(url) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -536,19 +596,23 @@ class GameUpdatesBot(Plugin):
     @command.argument("app_id", pass_raw=True)
     async def latest_update(self, evt: MessageEvent, app_id: str) -> None:
         """Fetch and display the latest patch notes for a specific Steam App ID."""
-        await self._note_user_language(evt)
-        app_id = app_id.strip()
-        room_id = str(evt.room_id)
-        locale = await self.resolve_locale(room_id, self._message_body(evt))
-        if not app_id:
-            await evt.respond(tr(locale, "usage_latest"))
-            return
-            
-        update = await self.fetch_latest_update(app_id)
-        if update:
-            locale = await self.resolve_locale(
-                room_id, self._message_body(evt), update["name"], update.get("title")
-            )
-            await evt.respond(self._update_message_content(locale, update, latest=True))
-        else:
-            await evt.respond(tr(locale, "no_patch_notes", app_id=app_id))
+        try:
+            await self._note_user_language(evt)
+            app_id = app_id.strip()
+            room_id = str(evt.room_id)
+            locale = await self.resolve_locale(room_id, self._message_body(evt))
+            if not app_id or not app_id.isdigit():
+                await evt.respond(tr(locale, "usage_latest"))
+                return
+
+            update = await self.fetch_latest_update(app_id)
+            if update:
+                locale = await self.resolve_locale(
+                    room_id, self._message_body(evt), update["name"], update.get("title")
+                )
+                await evt.respond(self._update_message_content(locale, update, latest=True))
+            else:
+                await evt.respond(tr(locale, "no_patch_notes", app_id=app_id))
+        except Exception:
+            self.log.exception("latest command failed")
+            await self._respond_error(evt)

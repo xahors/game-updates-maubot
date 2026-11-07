@@ -6,6 +6,7 @@
 
 - Добавление игр по Steam App ID из ссылки магазина (например, `store.steampowered.com/app/<game_id>`).
 - Бот проверяет обновления раз в час и отправляет последнее обновление для подписанных игр.
+- Ответы бота на **русском или английском** — язык выбирается автоматически для каждой Matrix-комнаты (см. ниже).
 
 ## Команды
 
@@ -32,6 +33,37 @@
 3. При найденном обновлении парсит BBCode в чистый HTML (убирает внешние трекинг-картинки для совместимости с Matrix).
 4. Если обновление новее сохранённого в базе, отправляет в комнату Matrix-сообщение в формате HTML.
 
+Периодичность: **10 с** задержка после старта, затем проверка **каждый час**; между играми в одном проходе пауза **10 с**.
+
+## Язык ответов (RU / EN)
+
+Переводятся только **служебные тексты бота** (подтверждения команд, заголовки уведомлений, ссылки вроде «Читать патчноуты в Steam»). Текст патчноутов приходит **как в Steam** (язык анонса не меняется).
+
+### Когда бот отвечает по-русски
+
+Для комнаты выбирается русский, если выполняется **любое** из условий:
+
+1. **Кириллица в сообщениях комнаты** — бот обрабатывает обычные Matrix-сообщения (не только команды). Если в тексте есть кириллица, комната помечается в БД (`room_settings.language = ru`) и дальше ответы в этой комнате идут на русском, пока настройка сохранена.
+2. **Кириллица в контексте команды** — текст самой команды, название игры из Steam или заголовок новости об обновлении содержат кириллицу (например, локализованное название игры).
+3. **Комната уже помечена как русскоязычная** — после любого русскоязычного сообщения в канале последующие команды на латинице (`!game-updates add 123`) тоже получают русские ответы.
+
+### Когда остаётся английский
+
+- Команды только из латиницы и цифр, **английское** название игры, в комнате ещё **не было** сообщений с кириллицей.
+- Пример: `!game-updates add 4753960` для *Meow Squad: Incremental Fishing* → ответ на английском, пока канал не «узнан» как русскоязычный.
+
+### Особенности
+
+| Ситуация | Поведение |
+|----------|-----------|
+| Первое сообщение в комнате — русское в чате | Комната запоминает RU; команды и hourly-уведомления — на русском |
+| Только английские команды, без русского чата | Ответы на английском |
+| Игра с кириллицей в названии | RU для этой операции; название может помочь выбрать RU |
+| `!game-updates pause` и др. | Тот же выбор языка, что и для `add` / `list` |
+| Сброс на EN вручную | **Нет** отдельной команды сброса; язык комнаты не переключается обратно автоматически |
+
+Чтобы «включить» русский в канале с английскими командами, достаточно **одного** обычного сообщения на русском в той же комнате (до или после подписки на игры).
+
 ## Сборка
 
 1. **Рекомендуется:** в каталоге с `maubot.yaml` выполните [`mbc build`](https://docs.mau.fi/maubot/usage/cli/build.html). Для разработки: `mbc build -u` — сборка и загрузка на сервер maubot.
@@ -57,6 +89,7 @@ A Maubot plugin that tracks backend game updates and posts patch notes directly 
 
 - Add games by Steam game ID from the Steam store link (e.g. `store.steampowered.com/app/<game_id>`).
 - The bot checks for game updates hourly and posts the latest update for subscribed games.
+- Bot replies in **Russian or English** — locale is chosen automatically per Matrix room (see below).
 
 ## Commands
 
@@ -82,6 +115,37 @@ The bot runs a background `asyncio` task (`check_updates_loop`) that wakes up on
 2. It hits the Official Steam News API to check for new posts tagged with `patchnotes` or published in the `steam_community_announcements` feed.
 3. If an update is found, it parses the BBCode to clean HTML (stripping out blocked external tracking images for Matrix compatibility).
 4. If this update is newer than the one stored in the bot's database, it dispatches an HTML-formatted Matrix message alerting the room.
+
+Schedule: **10 s** delay after startup, then checks **every hour**; **10 s** pause between games in each run.
+
+## Response language (RU / EN)
+
+Only the **bot's own UI strings** are translated (command confirmations, notification headings, links like “Read patch notes on Steam”). Patch note **body text** is whatever Steam returns (not translated).
+
+### When the bot replies in Russian
+
+Russian is used for a room if **any** of these apply:
+
+1. **Cyrillic in room messages** — the bot listens to normal Matrix messages, not only commands. Cyrillic text sets `room_settings.language = ru` in the database; later replies in that room stay Russian while that setting persists.
+2. **Cyrillic in command context** — the command text, the Steam game name, or the update headline contains Cyrillic (e.g. a localized title).
+3. **Room already marked Russian** — after any Russian message in the channel, even all-Latin commands (`!game-updates add 123`) get Russian replies.
+
+### When English is used
+
+- Commands are Latin-only, the **game name is English**, and the room has **no** Cyrillic messages yet.
+- Example: `!game-updates add 4753960` for *Meow Squad: Incremental Fishing* → English reply until the channel is recognized as Russian.
+
+### Notes
+
+| Situation | Behavior |
+|-----------|----------|
+| First Russian chat message in the room | Room remembered as RU; commands and hourly alerts use Russian |
+| English-only commands, no Russian chat | English replies |
+| Game with Cyrillic in the name | RU for that interaction; name can tip locale to RU |
+| `!game-updates pause`, etc. | Same locale rules as `add` / `list` |
+| Manual reset to EN | **No** dedicated command; room language does not auto-revert |
+
+To get Russian replies in a channel that only uses English commands, send **one** normal Russian message in that room (before or after subscribing).
 
 ## Building
 
