@@ -1,11 +1,62 @@
+# Плагин Game Updates для Maubot
+
+Плагин Maubot, который отслеживает обновления игр и публикует патчноуты прямо в ваших Matrix-комнатах.
+
+## Возможности
+
+- Добавление игр по Steam App ID из ссылки магазина (например, `store.steampowered.com/app/<game_id>`).
+- Бот проверяет обновления раз в час и отправляет последнее обновление для подписанных игр.
+
+## Команды
+
+Все команды начинаются с префикса `!game-updates`.
+
+- `!game-updates add <STEAM_APP_ID>` — подписать текущий канал на обновления указанной игры. Бот автоматически получит и покажет официальное название игры.
+- `!game-updates remove <STEAM_APP_ID>` — отписать текущий канал от указанной игры.
+- `!game-updates list` — список игр (названия и ID), за которыми следит канал.
+- `!game-updates latest <STEAM_APP_ID>` — вручную получить и показать последние патчноуты или информацию об обновлении, не дожидаясь фонового цикла.
+- `!game-updates pause` — приостановить или возобновить уведомления об обновлениях в текущем канале.
+
+## Как узнать Steam App ID
+
+1. Откройте страницу игры в магазине Steam в браузере.
+2. Посмотрите URL в адресной строке (например, `https://store.steampowered.com/app/2527500/MiSide/`).
+3. Число сразу после `/app/` — это нужный ID (в примере — `2527500`).
+
+## Как это устроено
+
+Бот запускает фоновую задачу `asyncio` (`check_updates_loop`), которая срабатывает раз в час.
+
+1. Запрашивает из базы все подписанные игры во всех неприостановленных комнатах.
+2. Обращается к официальному Steam News API за новыми постами с тегом `patchnotes` или из ленты `steam_community_announcements`.
+3. При найденном обновлении парсит BBCode в чистый HTML (убирает внешние трекинг-картинки для совместимости с Matrix).
+4. Если обновление новее сохранённого в базе, отправляет в комнату Matrix-сообщение в формате HTML.
+
+## Сборка
+
+1. **Рекомендуется:** в каталоге с `maubot.yaml` выполните [`mbc build`](https://docs.mau.fi/maubot/usage/cli/build.html). Имя файла может соответствовать `id` плагина (например, `durkluf.game-updates.mbp`). Для разработки: `mbc build -u` — сборка и загрузка на сервер maubot.
+2. **Без mbc:** `.\build.ps1` (Windows) или `./build.sh` (Linux/macOS) — в корне репозитория появится `game-updates.mbp`.
+
+В архив `.mbp` попадают только `maubot.yaml` и `bot.py`.
+
+## Установка
+
+1. Соберите плагин (см. раздел «Сборка») или упакуйте файлы вручную в архив `.mbp`.
+2. Загрузите `game-updates.mbp` в веб-интерфейсе Maubot.
+3. Создайте клиента и экземпляр, свяжите их и пригласите бота в нужную Matrix-комнату.
+
+---
+
+## English
+
 # Game Updates Maubot Plugin
 
 A Maubot plugin that tracks backend game updates and posts patch notes directly into your Matrix rooms.
 
 ## Features
 
-- Add games by steam game ID from steam store link (ex. store.steampowered.com/app/<game_id>.
-- Bot checks for game updates hourly. Posts latest game update for subscribed games. 
+- Add games by Steam game ID from the Steam store link (e.g. `store.steampowered.com/app/<game_id>`).
+- The bot checks for game updates hourly and posts the latest update for subscribed games.
 
 ## Commands
 
@@ -25,15 +76,22 @@ All commands are prefixed with `!game-updates`.
 
 ## How it works under the hood
 
-The bot runs a background `asyncio` task (`check_updates_loop`) that wakes up once every hour. 
+The bot runs a background `asyncio` task (`check_updates_loop`) that wakes up once every hour.
 
 1. It queries its database for all subscribed games across all non-paused rooms.
 2. It hits the Official Steam News API to check for new posts tagged with `patchnotes` or published in the `steam_community_announcements` feed.
 3. If an update is found, it parses the BBCode to clean HTML (stripping out blocked external tracking images for Matrix compatibility).
 4. If this update is newer than the one stored in the bot's database, it dispatches an HTML-formatted Matrix message alerting the room.
 
+## Building
+
+1. **Recommended:** run [`mbc build`](https://docs.mau.fi/maubot/usage/cli/build.html) in the directory that contains `maubot.yaml`. The output filename may follow the plugin `id` (e.g. `durkluf.game-updates.mbp`). For development, use `mbc build -u` to build and upload to your maubot server.
+2. **Without mbc:** run `.\build.ps1` on Windows or `./build.sh` on Linux/macOS to produce `game-updates.mbp` in the repository root.
+
+The `.mbp` archive includes only `maubot.yaml` and `bot.py`.
+
 ## Installation
 
-1. Zip the plugin files into an `.mbp` archive
+1. Build the plugin (see **Building**) or zip the plugin files into an `.mbp` archive manually.
 2. Upload the `game-updates.mbp` file to your Maubot manager via the web interface.
 3. Create a new client and instance, link them, and invite the bot to your desired Matrix room.
