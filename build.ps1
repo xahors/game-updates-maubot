@@ -1,15 +1,35 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$outFile = Join-Path $PSScriptRoot "game-updates.mbp"
+$metaPath = Join-Path $PSScriptRoot "maubot.yaml"
+if (-not (Test-Path -LiteralPath $metaPath)) {
+    Write-Error "Missing maubot.yaml"
+}
+
+$id = $null
+$version = $null
+foreach ($line in Get-Content -LiteralPath $metaPath) {
+    if ($line -match '^\s*id:\s*(.+)\s*$') {
+        $id = $Matches[1].Trim()
+    } elseif ($line -match '^\s*version:\s*(.+)\s*$') {
+        $version = $Matches[1].Trim()
+    }
+}
+if (-not $id -or -not $version) {
+    Write-Error "Could not read id and version from maubot.yaml"
+}
+
+$outName = "${id}-v${version}.mbp"
+$outFile = Join-Path $PSScriptRoot $outName
 
 if (Get-Command mbc -ErrorAction SilentlyContinue) {
-    Write-Host "Using mbc build..."
-    & mbc build
+    Write-Host "Using mbc build -> $outName"
+    & mbc build -o $outFile
     if ($LASTEXITCODE -eq 0) {
+        Write-Host "Built: $outFile"
         exit 0
     }
-    Write-Warning "mbc build failed (exit $LASTEXITCODE); building game-updates.mbp manually."
+    Write-Warning "mbc build failed (exit $LASTEXITCODE); building $outName manually."
 }
 
 $files = @(
@@ -22,7 +42,7 @@ foreach ($f in $files) {
     }
 }
 
-$zipTemp = Join-Path $PSScriptRoot "game-updates.mbp.zip"
+$zipTemp = Join-Path $PSScriptRoot "$outName.zip"
 foreach ($p in @($outFile, $zipTemp)) {
     if (Test-Path -LiteralPath $p) {
         Remove-Item -LiteralPath $p -Force
@@ -30,5 +50,5 @@ foreach ($p in @($outFile, $zipTemp)) {
 }
 
 Compress-Archive -Path $files -DestinationPath $zipTemp -CompressionLevel Optimal
-Rename-Item -LiteralPath $zipTemp -NewName "game-updates.mbp"
+Rename-Item -LiteralPath $zipTemp -NewName $outName
 Write-Host "Built: $outFile"

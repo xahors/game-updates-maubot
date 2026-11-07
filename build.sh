@@ -2,14 +2,28 @@
 set -eu
 cd "$(dirname "$0")"
 
-OUT="game-updates.mbp"
+if [ ! -f maubot.yaml ]; then
+  echo "Missing maubot.yaml" >&2
+  exit 1
+fi
+
+id=$(grep -E '^[[:space:]]*id:' maubot.yaml | head -n1 | sed -E 's/^[[:space:]]*id:[[:space:]]*//')
+version=$(grep -E '^[[:space:]]*version:' maubot.yaml | head -n1 | sed -E 's/^[[:space:]]*version:[[:space:]]*//')
+
+if [ -z "$id" ] || [ -z "$version" ]; then
+  echo "Could not read id and version from maubot.yaml" >&2
+  exit 1
+fi
+
+OUT="${id}-v${version}.mbp"
 
 if command -v mbc >/dev/null 2>&1; then
-  echo "Using mbc build..."
-  if mbc build; then
+  echo "Using mbc build -> $OUT"
+  if mbc build -o "$OUT"; then
+    echo "Built: $(pwd)/$OUT"
     exit 0
   fi
-  echo "mbc build failed; building game-updates.mbp manually." >&2
+  echo "mbc build failed; building $OUT manually." >&2
 fi
 
 for f in maubot.yaml bot.py; do

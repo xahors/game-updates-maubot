@@ -34,15 +34,15 @@
 
 ## Сборка
 
-1. **Рекомендуется:** в каталоге с `maubot.yaml` выполните [`mbc build`](https://docs.mau.fi/maubot/usage/cli/build.html). Имя файла может соответствовать `id` плагина (например, `durkluf.game-updates.mbp`). Для разработки: `mbc build -u` — сборка и загрузка на сервер maubot.
-2. **Без mbc:** `.\build.ps1` (Windows) или `./build.sh` (Linux/macOS) — в корне репозитория появится `game-updates.mbp`.
+1. **Рекомендуется:** в каталоге с `maubot.yaml` выполните [`mbc build`](https://docs.mau.fi/maubot/usage/cli/build.html). Для разработки: `mbc build -u` — сборка и загрузка на сервер maubot.
+2. **Удобный вариант:** `.\build.ps1` (Windows) или `./build.sh` (Linux/macOS) — читают `id` и `version` из `maubot.yaml` и создают файл вида `NEXT.game-updates-v1.0.0.mbp`.
 
 В архив `.mbp` попадают только `maubot.yaml` и `bot.py`.
 
 ## Установка
 
 1. Соберите плагин (см. раздел «Сборка») или упакуйте файлы вручную в архив `.mbp`.
-2. Загрузите `game-updates.mbp` в веб-интерфейсе Maubot.
+2. Загрузите собранный `.mbp` (например, `NEXT.game-updates-v1.0.0.mbp`) в веб-интерфейсе Maubot.
 3. Создайте клиента и экземпляр, свяжите их и пригласите бота в нужную Matrix-комнату.
 
 ---
@@ -85,13 +85,13 @@ The bot runs a background `asyncio` task (`check_updates_loop`) that wakes up on
 
 ## Building
 
-1. **Recommended:** run [`mbc build`](https://docs.mau.fi/maubot/usage/cli/build.html) in the directory that contains `maubot.yaml`. The output filename may follow the plugin `id` (e.g. `durkluf.game-updates.mbp`). For development, use `mbc build -u` to build and upload to your maubot server.
-2. **Without mbc:** run `.\build.ps1` on Windows or `./build.sh` on Linux/macOS to produce `game-updates.mbp` in the repository root.
+1. **Recommended:** run [`mbc build`](https://docs.mau.fi/maubot/usage/cli/build.html) in the directory that contains `maubot.yaml`. For development, use `mbc build -u` to build and upload to your maubot server.
+2. **Convenient:** run `.\build.ps1` on Windows or `./build.sh` on Linux/macOS — they read `id` and `version` from `maubot.yaml` and produce a file like `NEXT.game-updates-v1.0.0.mbp`.
 
 The `.mbp` archive includes only `maubot.yaml` and `bot.py`.
 
 ## Installation
 
 1. Build the plugin (see **Building**) or zip the plugin files into an `.mbp` archive manually.
-2. Upload the `game-updates.mbp` file to your Maubot manager via the web interface.
+2. Upload the built `.mbp` file (e.g. `NEXT.game-updates-v1.0.0.mbp`) to your Maubot manager via the web interface.
 3. Create a new client and instance, link them, and invite the bot to your desired Matrix room.
