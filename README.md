@@ -37,7 +37,7 @@
 
 ## Язык ответов (RU / EN)
 
-Переводятся только **служебные тексты бота** (подтверждения команд, заголовки уведомлений, ссылки вроде «Читать патчноуты в Steam»). Текст патчноутов приходит **как в Steam** (язык анонса не меняется).
+Переводятся **служебные тексты бота** (подтверждения команд, заголовки уведомлений, ссылки вроде «Читать патчноуты в Steam»). Если комната отвечает на **русском**, заголовок и текст патчноута с Steam (если они не на русском) автоматически переводятся перед публикацией.
 
 ### Когда бот отвечает по-русски
 
@@ -76,6 +76,21 @@
 1. Соберите плагин (см. раздел «Сборка») или упакуйте файлы вручную в архив `.mbp`.
 2. Загрузите собранный `.mbp` (например, `NEXT.game-updates-v1.0.0.mbp`) в веб-интерфейсе Maubot.
 3. Создайте клиента и экземпляр, свяжите их и пригласите бота в нужную Matrix-комнату.
+
+## Обновление
+
+Новую версию можно поставить **поверх** уже установленной: в `maubot.yaml` должен остаться тот же `id` (`NEXT.game-updates`), а поле `version` — быть выше предыдущей. Клиента Matrix и экземпляр плагина пересоздавать не нужно.
+
+1. Соберите новый `.mbp` (см. раздел «Сборка») или выполните `mbc build -u`, если CLI настроен на ваш сервер Maubot.
+2. Загрузите архив в веб-интерфейсе Maubot (раздел плагинов). Пакет с тем же `id` **заменит** старую версию плагина.
+3. **Перезагрузите экземпляр** (`instance`), к которому привязан бот (кнопка reload/restart в UI или `mbc reload <instance-id>`). Пока экземпляр не перезапущен, может работать старый код в памяти, даже если новый `.mbp` уже загружен.
+4. При старте Maubot сам применит недостающие миграции БД (если они появились в новой версии).
+
+**Сохраняется:** подписки на игры, пауза уведомлений, язык комнаты (`room_settings`) и записи о последних известных обновлениях.
+
+**Обычно не требуется:** удалять плагин перед загрузкой, заново создавать клиента или instance (кроме случая, когда вы меняете `id` плагина).
+
+После обновления при необходимости проверьте работу командой `!game-updates latest <STEAM_APP_ID>` и при ошибках посмотрите логи экземпляра Maubot.
 
 ---
 
@@ -120,7 +135,7 @@ Schedule: **10 s** delay after startup, then checks **every hour**; **10 s** pau
 
 ## Response language (RU / EN)
 
-Only the **bot's own UI strings** are translated (command confirmations, notification headings, links like “Read patch notes on Steam”). Patch note **body text** is whatever Steam returns (not translated).
+The bot's **UI strings** are translated (command confirmations, notification headings, links like “Read patch notes on Steam”). When a room uses **Russian**, patch note **titles and bodies** from Steam are translated to Russian before posting if they are not already in Russian.
 
 ### When the bot replies in Russian
 
@@ -159,3 +174,18 @@ The `.mbp` archive includes only `maubot.yaml` and `bot.py`.
 1. Build the plugin (see **Building**) or zip the plugin files into an `.mbp` archive manually.
 2. Upload the built `.mbp` file (e.g. `NEXT.game-updates-v1.0.0.mbp`) to your Maubot manager via the web interface.
 3. Create a new client and instance, link them, and invite the bot to your desired Matrix room.
+
+## Updating
+
+You can install a newer release **on top of** an existing one: keep the same plugin `id` in `maubot.yaml` (`NEXT.game-updates`) and bump `version`. You do not need to recreate the Matrix client or plugin instance.
+
+1. Build a new `.mbp` (see **Building**) or run `mbc build -u` if your Maubot CLI is configured for your server.
+2. Upload the archive in the Maubot web UI (Plugins). A package with the same `id` **replaces** the previous plugin version.
+3. **Reload the plugin instance** tied to your bot (reload/restart in the UI, or `mbc reload <instance-id>`). Until the instance restarts, the old code may still be running in memory even after the new `.mbp` is uploaded.
+4. On startup, Maubot applies any new database migrations shipped with the plugin.
+
+**Preserved:** game subscriptions, notification pause state, per-room language (`room_settings`), and last-known update IDs.
+
+**Usually unnecessary:** uninstalling the plugin before upload, or recreating the client/instance (unless you change the plugin `id`).
+
+After upgrading, verify with `!game-updates latest <STEAM_APP_ID>` if needed, and check the Maubot instance logs on errors.

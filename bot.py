@@ -11,6 +11,21 @@ from mautrix.types import EventType, TextMessageEventContent, Format, MessageTyp
 from mautrix.util.async_db import UpgradeTable, Scheme
 
 _CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
+_STEAM_TRANSLATE_BLOCK_RES = (
+    re.compile(
+        r'\[dynamiclink\s+href="(.*?)"\](.*?)\[/dynamiclink\]',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r'\[img\s+src="(.*?)"\]\[/img\]', re.IGNORECASE | re.DOTALL),
+    re.compile(r"\[img\](.*?)\[/img\]", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\[url=(.+?)\](.*?)\[/url\]", re.IGNORECASE | re.DOTALL),
+)
+_STEAM_TRANSLATE_TAG_RE = re.compile(
+    r"\[(?:/)?[a-z0-9*]+(?:=[^\]]*)?\]|\{STEAM_CLAN_IMAGE\}",
+    re.IGNORECASE,
+)
+_PRESERVE_MARKER_RE = re.compile(r"⟦P(\d+)⟧")
+_TRANSLATE_CHUNK_CHARS = 3500
 
 STR: Dict[str, Dict[str, str]] = {
     "pause": {
@@ -102,6 +117,68 @@ _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 def contains_cyrillic(text: Optional[str]) -> bool:
     return bool(text and _CYRILLIC_RE.search(text))
+
+
+def cyrillic_letter_ratio(text: str) -> float:
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return 0.0
+    cyrillic = sum(1 for c in letters if "\u0400" <= c <= "\u04FF")
+    return cyrillic / len(letters)
+
+
+def needs_russian_translation(text: Optional[str]) -> bool:
+    if not text or not text.strip():
+        return False
+    return cyrillic_letter_ratio(text) < 0.15
+
+
+def _preserve_slot(tokens: List[str], value: str) -> str:
+    tokens.append(value)
+    return f"\n⟦P{len(tokens) - 1}⟧\n"
+
+
+def shield_preserve_tokens(text: str) -> tuple[str, List[str]]:
+    tokens: List[str] = []
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    for pattern in _STEAM_TRANSLATE_BLOCK_RES:
+        text = pattern.sub(lambda m: _preserve_slot(tokens, m.group(0)), text)
+
+    text = _STEAM_TRANSLATE_TAG_RE.sub(
+        lambda m: _preserve_slot(tokens, m.group(0)), text
+    )
+    return text, tokens
+
+
+def restore_preserve_tokens(text: str, tokens: List[str]) -> str:
+    def repl(match: re.Match) -> str:
+        idx = int(match.group(1))
+        if 0 <= idx < len(tokens):
+            return tokens[idx]
+        return match.group(0)
+
+    return _PRESERVE_MARKER_RE.sub(repl, text)
+
+
+def translation_chunks(shielded: str, max_chars: int) -> List[str]:
+    if len(shielded) <= max_chars:
+        return [shielded]
+
+    chunks: List[str] = []
+    current = ""
+    parts = re.split(r"(\n⟦P\d+⟧\n)", shielded)
+    for part in parts:
+        if not part:
+            continue
+        if len(current) + len(part) > max_chars and current:
+            chunks.append(current)
+            current = part
+        else:
+            current += part
+    if current:
+        chunks.append(current)
+    return chunks if chunks else [shielded]
 
 
 def tr(locale: str, key: str, **kwargs: str) -> str:
@@ -482,6 +559,58 @@ class GameUpdatesBot(Plugin):
             
         return text.strip()
 
+    async def _translate_to_russian(self, text: str) -> str:
+        if not text.strip():
+            return text
+
+        shielded, tokens = shield_preserve_tokens(text)
+        url = "https://translate.googleapis.com/translate_a/single"
+        translated_parts: List[str] = []
+
+        try:
+            chunks = translation_chunks(shielded, _TRANSLATE_CHUNK_CHARS)
+            async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+                for chunk_index, chunk in enumerate(chunks):
+                    params = {
+                        "client": "gtx",
+                        "sl": "auto",
+                        "tl": "ru",
+                        "dt": "t",
+                        "q": chunk,
+                    }
+                    async with session.get(url, params=params) as resp:
+                        if resp.status != 200:
+                            self.log.warning(
+                                "Translation HTTP %s, using original text", resp.status
+                            )
+                            return text
+                        data = await resp.json()
+                    segment = "".join(part[0] for part in data[0] if part and part[0])
+                    translated_parts.append(segment)
+                    if chunk_index + 1 < len(chunks):
+                        await asyncio.sleep(0.25)
+        except Exception as e:
+            self.log.warning(f"Translation failed, using original text: {e}")
+            return text
+
+        return restore_preserve_tokens("".join(translated_parts), tokens)
+
+    async def prepare_update_for_locale(self, update: dict, locale: str) -> dict:
+        prepared = dict(update)
+        raw = prepared.get("raw_contents") or ""
+        title = prepared.get("title") or ""
+
+        if locale == "ru":
+            if needs_russian_translation(title):
+                title = await self._translate_to_russian(title)
+                prepared["title"] = title
+            if needs_russian_translation(raw):
+                raw = await self._translate_to_russian(raw)
+                prepared["raw_contents"] = raw
+
+        prepared["contents"] = self._steam_markup_to_html(raw)
+        return prepared
+
     def _update_message_content(
         self, locale: str, update: dict, *, latest: bool = False
     ) -> TextMessageEventContent:
@@ -519,14 +648,13 @@ class GameUpdatesBot(Plugin):
                                 game_name = game_info['name'] if game_info else f"App {app_id}"
                                 
                                 raw_contents = item.get("contents", "No patch notes provided.")
-                                html_contents = self._steam_markup_to_html(raw_contents)
-                                
+
                                 return {
                                     "title": item.get("title", "New Update"),
                                     "url": item.get("url"),
                                     "id": item.get("gid"),
                                     "name": game_name,
-                                    "contents": html_contents,
+                                    "raw_contents": raw_contents,
                                     "date": item.get("date")
                                 }
         except Exception as e:
@@ -581,7 +709,8 @@ class GameUpdatesBot(Plugin):
                                     locale = await self.resolve_locale(
                                         room_id, update["name"], update.get("title")
                                     )
-                                    content = self._update_message_content(locale, update)
+                                    prepared = await self.prepare_update_for_locale(update, locale)
+                                    content = self._update_message_content(locale, prepared)
                                     await self.client.send_message(room_id, content)
                         
                         await asyncio.sleep(10) # Gentle to the server
@@ -610,7 +739,10 @@ class GameUpdatesBot(Plugin):
                 locale = await self.resolve_locale(
                     room_id, self._message_body(evt), update["name"], update.get("title")
                 )
-                await evt.respond(self._update_message_content(locale, update, latest=True))
+                prepared = await self.prepare_update_for_locale(update, locale)
+                await evt.respond(
+                    self._update_message_content(locale, prepared, latest=True)
+                )
             else:
                 await evt.respond(tr(locale, "no_patch_notes", app_id=app_id))
         except Exception:
