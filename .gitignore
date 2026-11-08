@@ -1,2 +1,2 @@
-*.mbp
 __pycache__/
+build/

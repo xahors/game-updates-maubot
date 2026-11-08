@@ -35,12 +35,12 @@ STR: Dict[str, Dict[str, str]] = {
     "pause_paused": {"en": "paused", "ru": "приостановлены"},
     "pause_resumed": {"en": "resumed", "ru": "возобновлены"},
     "usage_add": {
-        "en": "Please provide a Steam App ID. Usage: !game-updates add <ID>",
-        "ru": "Укажите Steam App ID. Использование: !game-updates add <ID>",
+        "en": "Please provide a Steam App ID. Usage: !steam add <ID>",
+        "ru": "Укажите Steam App ID. Использование: !steam add <ID>",
     },
     "usage_latest": {
-        "en": "Please provide a Steam App ID. Usage: !game-updates latest <ID>",
-        "ru": "Укажите Steam App ID. Использование: !game-updates latest <ID>",
+        "en": "Please provide a Steam App ID. Usage: !steam latest <ID>",
+        "ru": "Укажите Steam App ID. Использование: !steam latest <ID>",
     },
     "invalid_app_id": {
         "en": "Could not retrieve info for Steam App ID {app_id}. Please check if the ID is valid.",
@@ -295,12 +295,12 @@ class GameUpdatesBot(Plugin):
         except Exception as e:
             self.log.warning(f"Language detection failed: {e}")
 
-    @command.new("game-updates", require_subcommand=True)
-    async def game_updates(self, evt: MessageEvent) -> None:
+    @command.new("steam", require_subcommand=True)
+    async def steam(self, evt: MessageEvent) -> None:
         """Manage game update subscriptions for this channel."""
         pass
 
-    @game_updates.subcommand("pause")
+    @steam.subcommand("pause")
     async def pause(self, evt: MessageEvent) -> None:
         """Pause or resume game update notifications in this channel."""
         try:
@@ -327,7 +327,7 @@ class GameUpdatesBot(Plugin):
             self.log.exception("pause command failed")
             await self._respond_error(evt)
 
-    @game_updates.subcommand("add")
+    @steam.subcommand("add")
     @command.argument("app_id", pass_raw=True)
     async def add_game(self, evt: MessageEvent, app_id: str) -> None:
         """Subscribe this channel to updates for a specific Steam App ID."""
@@ -372,7 +372,7 @@ class GameUpdatesBot(Plugin):
             self.log.exception("add command failed for app_id=%r", app_id_arg)
             await self._respond_error(evt)
 
-    @game_updates.subcommand("remove")
+    @steam.subcommand("remove")
     @command.argument("app_id", pass_raw=True)
     async def remove_game(self, evt: MessageEvent, app_id: str) -> None:
         """Unsubscribe this channel from a specific Steam App ID."""
@@ -400,7 +400,7 @@ class GameUpdatesBot(Plugin):
             self.log.exception("remove command failed")
             await self._respond_error(evt)
 
-    @game_updates.subcommand("list")
+    @steam.subcommand("list")
     async def list_games(self, evt: MessageEvent) -> None:
         """List all games this channel is currently subscribed to."""
         try:
@@ -721,7 +721,7 @@ class GameUpdatesBot(Plugin):
             
             await asyncio.sleep(3600) # Check for updates once every hour
 
-    @game_updates.subcommand("latest")
+    @steam.subcommand("latest")
     @command.argument("app_id", pass_raw=True)
     async def latest_update(self, evt: MessageEvent, app_id: str) -> None:
         """Fetch and display the latest patch notes for a specific Steam App ID."""

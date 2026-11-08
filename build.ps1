@@ -19,8 +19,13 @@ if (-not $id -or -not $version) {
     Write-Error "Could not read id and version from maubot.yaml"
 }
 
+$buildDir = Join-Path $PSScriptRoot "build"
+if (-not (Test-Path -LiteralPath $buildDir)) {
+    New-Item -ItemType Directory -Path $buildDir | Out-Null
+}
+
 $outName = "${id}-v${version}.mbp"
-$outFile = Join-Path $PSScriptRoot $outName
+$outFile = Join-Path $buildDir $outName
 
 if (Get-Command mbc -ErrorAction SilentlyContinue) {
     Write-Host "Using mbc build -> $outName"
@@ -42,7 +47,7 @@ foreach ($f in $files) {
     }
 }
 
-$zipTemp = Join-Path $PSScriptRoot "$outName.zip"
+$zipTemp = Join-Path $buildDir "$outName.zip"
 foreach ($p in @($outFile, $zipTemp)) {
     if (Test-Path -LiteralPath $p) {
         Remove-Item -LiteralPath $p -Force

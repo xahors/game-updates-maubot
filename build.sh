@@ -15,7 +15,8 @@ if [ -z "$id" ] || [ -z "$version" ]; then
   exit 1
 fi
 
-OUT="${id}-v${version}.mbp"
+mkdir -p build
+OUT="build/${id}-v${version}.mbp"
 
 if command -v mbc >/dev/null 2>&1; then
   echo "Using mbc build -> $OUT"
