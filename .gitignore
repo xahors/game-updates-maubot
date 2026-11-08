@@ -1,2 +1,2 @@
-*.mbp
-.gitignore
+__pycache__/
+build/
