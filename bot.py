@@ -232,6 +232,57 @@ async def upgrade_v2(conn, scheme: Scheme) -> None:
         )
 
 
+async def _ensure_core_schema(conn, scheme: Scheme) -> None:
+    """Idempotent schema check for databases ahead of the plugin migration list."""
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS game_subscriptions (
+            room_id TEXT,
+            app_id TEXT,
+            PRIMARY KEY (room_id, app_id)
+        )
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS room_settings (
+            room_id TEXT PRIMARY KEY,
+            paused BOOLEAN DEFAULT FALSE,
+            language TEXT DEFAULT 'en'
+        )
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS last_updates (
+            app_id TEXT PRIMARY KEY,
+            last_update_id TEXT
+        )
+        """
+    )
+    if scheme == Scheme.SQLITE:
+        rows = await conn.fetch("PRAGMA table_info(room_settings)")
+        column_names = {row["name"] for row in rows}
+        if "language" not in column_names:
+            await conn.execute(
+                "ALTER TABLE room_settings ADD COLUMN language TEXT DEFAULT 'en'"
+            )
+    else:
+        await conn.execute(
+            "ALTER TABLE room_settings ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en'"
+        )
+
+
+@upgrade_table.register(description="Ensure core schema")
+async def upgrade_v3(conn, scheme: Scheme) -> None:
+    await _ensure_core_schema(conn, scheme)
+
+
+@upgrade_table.register(description="Schema revision sync")
+async def upgrade_v4(conn, scheme: Scheme) -> None:
+    await _ensure_core_schema(conn, scheme)
+
+
 class GameUpdatesBot(Plugin):
     @classmethod
     def get_db_upgrade_table(cls) -> UpgradeTable:
